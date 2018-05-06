@@ -1,4 +1,5 @@
 #coding:utf-8
+import os
 from gen_captcha import gen_captcha_text_and_image
 from gen_captcha import number
 from gen_captcha import alphabet
@@ -12,6 +13,8 @@ print("验证码图像channel:", image.shape)  # (60, 160, 3)
 # 图像大小
 IMAGE_HEIGHT = 60
 IMAGE_WIDTH = 160
+# IMAGE_HEIGHT = 30
+# IMAGE_WIDTH = 104
 MAX_CAPTCHA = len(text)
 print("验证码文本最长字符数", MAX_CAPTCHA)   # 验证码最长4字符; 我全部固定为4,可以不固定. 如果验证码长度小于4，用'_'补齐
 
@@ -96,7 +99,7 @@ def get_next_batch(batch_size=128):
 		''' 获取一张图，判断其是否符合（60，160，3）的规格'''
 		while True:
 			text, image = gen_captcha_text_and_image()
-			if image.shape == (60, 160, 3):#此部分应该与开头部分图片宽高吻合
+			if image.shape == (IMAGE_HEIGHT, IMAGE_WIDTH, 3):#此部分应该与开头部分图片宽高吻合
 				return text, image
 
 	for i in range(batch_size):
@@ -160,6 +163,7 @@ def crack_captcha_cnn(w_alpha=0.01, b_alpha=0.1):
 
 # 训练
 def train_crack_captcha_cnn():
+        checkpoint_path = "checkpoint"
 	output = crack_captcha_cnn()
 	#loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(output, Y))
 	loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=output, labels=Y))
@@ -173,24 +177,32 @@ def train_crack_captcha_cnn():
 	correct_pred = tf.equal(max_idx_p, max_idx_l)
 	accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
-	saver = tf.train.Saver()
+	saver = tf.train.Saver(max_to_keep=10)
+        checkpoint = tf.train.latest_checkpoint(checkpoint_path)
 	with tf.Session() as sess:
 		sess.run(tf.global_variables_initializer())
-
+                if checkpoint:
+                        print("Reload checkpoint")
+                        saver.restore(sess, checkpoint)
 		step = 0
+                max_acc = 0
 		while True:
 			batch_x, batch_y = get_next_batch(64)
-			_, loss_ = sess.run([optimizer, loss], feed_dict={X: batch_x, Y: batch_y, keep_prob: 0.75})
-			print(step, loss_)
+			_, loss_, acc_ = sess.run([optimizer, loss, accuracy], feed_dict={X: batch_x, Y: batch_y, keep_prob: 0.75})
+			print("Train: step {}, loss {}, acc {}".format(step, loss_, acc_))
 
 			# 每100 step计算一次准确率
 			if step % 100 == 0:
 				batch_x_test, batch_y_test = get_next_batch(100)
-				acc = sess.run(accuracy, feed_dict={X: batch_x_test, Y: batch_y_test, keep_prob: 1.})
-				print(step, acc)
+				loss_, acc_ = sess.run([loss, accuracy], feed_dict={X: batch_x_test, Y: batch_y_test, keep_prob: 1.})
+				print("Test: step {}, loss {}, acc {}".format(step, loss_, acc_))
 				# 如果准确率大于50%,保存模型,完成训练
-				if acc > 0.5:
-					saver.save(sess, "crack_capcha.model", global_step=step)
+                                if acc_ > max_acc:
+                                        checkpoint_name = os.path.join(checkpoint_path, 'model_step' + str(step + 1)+ '.ckpt')
+                                        saver.save(sess, checkpoint_name)
+                                        max_acc = acc_
+				if acc_ > 0.94:
+					saver.save(sess, "model/crack_capcha.model", global_step=step)
 					break
 			step += 1
 
